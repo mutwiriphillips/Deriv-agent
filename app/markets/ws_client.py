@@ -51,7 +51,7 @@ class _DerivWSConnection:
                 raw = await self._ws.recv()
                 data = json.loads(raw)
                 if data.get("error"):
-                    raise DerivApiError(data["error"])
+                    raise DerivApiError(data["error"], request=payload)
                 if data.get("echo_req", {}).get("req_id") == req_id:
                     return data
 
@@ -132,17 +132,30 @@ class DerivPublicClient(_DerivWSConnection):
         adjust_start_time: int = 0,
     ) -> dict:
         """
-        One-shot historical fetch (subscribe=0). Returns the raw `history` dict
+        One-shot historical fetch. Returns the raw `history` dict
         ({"prices": [...], "times": [...]}) for style="ticks", or the raw
         `candles` list for style="candles" — caller decides what to do with it.
+
+        IMPORTANT — confirmed against a live error, not just docs: sending
+        `subscribe`/`adjust_start_time` on a style="candles" request gets
+        rejected with InputValidationFailed naming exactly those two fields.
+        The docs' example request showing subscribe:0/adjust_start_time:0
+        was for style="ticks" only; candle requests apparently don't accept
+        those fields at all (evidence: the reported error field names,
+        the fact this is the only ticks_history call path ever exercised in
+        production, and that the API's own migration example never showed
+        a style="candles" one-time-request variant including them). Treated
+        here as confirmed rather than a guess, but still worth a second look
+        if a future response ever contradicts it.
         """
         payload: dict[str, Any] = {
             "ticks_history": symbol,
             "style": style,
             "end": end,
-            "adjust_start_time": adjust_start_time,
-            "subscribe": 0,
         }
+        if style == "ticks":
+            payload["subscribe"] = 0
+            payload["adjust_start_time"] = adjust_start_time
         if style == "candles":
             payload["granularity"] = granularity
         if count is not None:
@@ -162,18 +175,21 @@ class DerivPublicClient(_DerivWSConnection):
         if self._ws is None:
             raise RuntimeError("DerivPublicClient used outside `async with`")
         req_id = next(_req_id_counter)
-        await self._ws.send(json.dumps({"ticks": symbol, "subscribe": 1, "req_id": req_id}))
+        payload = {"ticks": symbol, "subscribe": 1, "req_id": req_id}
+        await self._ws.send(json.dumps(payload))
         while True:
             raw = await self._ws.recv()
             data = json.loads(raw)
             if data.get("error"):
-                raise DerivApiError(data["error"])
+                raise DerivApiError(data["error"], request=payload)
             if data.get("msg_type") == "tick":
                 yield data["tick"]
 
 
 class DerivApiError(RuntimeError):
-    def __init__(self, error: dict[str, Any]):
-        super().__init__(f"Deriv API error [{error.get('code')}]: {error.get('message')}")
+    def __init__(self, error: dict[str, Any], request: dict[str, Any] | None = None):
+        request_str = f" | request sent: {json.dumps(request)}" if request is not None else ""
+        super().__init__(f"Deriv API error [{error.get('code')}]: {error.get('message')}{request_str}")
         self.code = error.get("code")
         self.raw = error
+        self.request = request
