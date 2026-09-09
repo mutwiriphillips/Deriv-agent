@@ -152,3 +152,74 @@ async def test_fetch_and_store_candles_only_requests_missing_range(tmp_path):
         assert called_kwargs["start"] == "1060"
 
     assert inserted == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_and_store_candles_treats_invalid_start_end_as_no_new_data(tmp_path):
+    """
+    Confirmed against a real production error: when `start` (last stored
+    candle + duration_s) lands at or after the server's current latest
+    completed candle, Deriv returns InvalidStartEnd. This is expected --
+    nothing new has closed yet -- and must return 0, not raise.
+    """
+    from app.markets.ws_client import DerivApiError
+
+    db_path = make_db(tmp_path)
+    existing = Candle(symbol="frxEURUSD", duration_s=60, timestamp=1000, open=1, high=1.1, low=0.9, close=1.0, tick_count=1)
+    store_candles(db_path, [existing])
+
+    with patch("app.data.historical_store.DerivPublicClient") as MockClient:
+        instance = MockClient.return_value
+        instance.__aenter__ = AsyncMock(return_value=instance)
+        instance.__aexit__ = AsyncMock(return_value=None)
+        instance.ticks_history = AsyncMock(
+            side_effect=DerivApiError({"code": "InvalidStartEnd", "message": "Start time must be before end time"})
+        )
+
+        inserted = await fetch_and_store_candles(db_path, "frxEURUSD", duration_s=60)
+
+    assert inserted == 0  # did not raise
+
+
+@pytest.mark.asyncio
+async def test_fetch_and_store_candles_reraises_other_api_errors(tmp_path):
+    """Only InvalidStartEnd is treated as benign -- any other API error must still propagate."""
+    from app.markets.ws_client import DerivApiError
+
+    db_path = make_db(tmp_path)
+    existing = Candle(symbol="frxEURUSD", duration_s=60, timestamp=1000, open=1, high=1.1, low=0.9, close=1.0, tick_count=1)
+    store_candles(db_path, [existing])
+
+    with patch("app.data.historical_store.DerivPublicClient") as MockClient:
+        instance = MockClient.return_value
+        instance.__aenter__ = AsyncMock(return_value=instance)
+        instance.__aexit__ = AsyncMock(return_value=None)
+        instance.ticks_history = AsyncMock(
+            side_effect=DerivApiError({"code": "SomeOtherError", "message": "something genuinely wrong"})
+        )
+
+        with pytest.raises(DerivApiError):
+            await fetch_and_store_candles(db_path, "frxEURUSD", duration_s=60)
+
+
+@pytest.mark.asyncio
+async def test_fetch_and_store_candles_reraises_invalid_start_end_on_first_ever_fetch(tmp_path):
+    """
+    If InvalidStartEnd happens with no prior stored data (start=None), that's
+    NOT the benign "nothing new yet" case -- something else is wrong, and it
+    should still surface as an error rather than being silently swallowed.
+    """
+    from app.markets.ws_client import DerivApiError
+
+    db_path = make_db(tmp_path)  # empty -- no existing candles, so start will be None
+
+    with patch("app.data.historical_store.DerivPublicClient") as MockClient:
+        instance = MockClient.return_value
+        instance.__aenter__ = AsyncMock(return_value=instance)
+        instance.__aexit__ = AsyncMock(return_value=None)
+        instance.ticks_history = AsyncMock(
+            side_effect=DerivApiError({"code": "InvalidStartEnd", "message": "Start time must be before end time"})
+        )
+
+        with pytest.raises(DerivApiError):
+            await fetch_and_store_candles(db_path, "frxEURUSD", duration_s=60)

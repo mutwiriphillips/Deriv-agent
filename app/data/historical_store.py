@@ -8,7 +8,7 @@ from __future__ import annotations
 import sqlite3
 
 from app.data.candles import Candle
-from app.markets.ws_client import DerivPublicClient
+from app.markets.ws_client import DerivApiError, DerivPublicClient
 
 
 def get_stored_range(db_path: str, symbol: str, duration_s: int) -> tuple[int | None, int | None]:
@@ -67,14 +67,26 @@ async def fetch_and_store_candles(
         start = str(latest + duration_s)  # only ask for what comes after what we have
 
     async with DerivPublicClient() as client:
-        raw_candles = await client.ticks_history(
-            symbol,
-            style="candles",
-            granularity=duration_s,
-            count=count,
-            start=start,
-            end="latest",
-        )
+        try:
+            raw_candles = await client.ticks_history(
+                symbol,
+                style="candles",
+                granularity=duration_s,
+                count=count,
+                start=start,
+                end="latest",
+            )
+        except DerivApiError as e:
+            if e.code == "InvalidStartEnd" and start is not None:
+                # Confirmed against a real production error: this happens
+                # whenever `start` (last stored candle + duration_s) lands at
+                # or after the server's actual latest completed candle --
+                # i.e. no new candle has closed since our last poll yet. With
+                # a poll interval matching the candle duration, this is an
+                # expected, recurring condition, not a real error: there's
+                # simply nothing new to fetch on this tick.
+                return 0
+            raise
 
     candles = [
         Candle(
