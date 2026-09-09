@@ -8,8 +8,6 @@ as the first message after connecting).
 """
 from __future__ import annotations
 
-from typing import Any
-
 from app.markets.ws_client import _DerivWSConnection
 
 

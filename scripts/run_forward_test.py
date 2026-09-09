@@ -44,7 +44,7 @@ import asyncio
 import sys
 
 from app.config.settings import settings
-from app.data.historical_store import fetch_and_store_candles, get_stored_range
+from app.data.historical_store import fetch_and_store_candles
 from app.execution.auth_client import DerivAuthenticatedClient
 from app.execution.order_manager import OrderManager, OrderManagerConfig
 from app.features.types import CandleSeries
@@ -83,6 +83,25 @@ async def get_demo_ws_url() -> str:
     return await get_ws_url_for_account(account_id)
 
 
+def ensure_db_schema(db_path: str) -> None:
+    """
+    Applies app/storage/schema.sql before anything touches the database.
+    Without this, the very first run crashes with "no such table: candles" —
+    every test avoided this because the test helpers always applied the
+    schema first; this script originally didn't, and would fail immediately
+    on a fresh checkout with no forward_test.db yet. Safe to call every run:
+    every CREATE in schema.sql is IF NOT EXISTS.
+    """
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    try:
+        with open("app/storage/schema.sql") as f:
+            conn.executescript(f.read())
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def load_series_from_db(db_path: str, symbol: str, duration_s: int) -> CandleSeries:
     import sqlite3
     conn = sqlite3.connect(db_path)
@@ -106,6 +125,9 @@ async def main():
     if settings.live_trading:
         print("LIVE_TRADING is true in .env - refusing to run this script. This script is DEMO-only by design.")
         sys.exit(1)
+
+    print("Initializing local database schema (if not already present)...")
+    ensure_db_schema(DB_PATH)
 
     print("Ensuring local candle history exists / is up to date...")
     inserted = await fetch_and_store_candles(DB_PATH, SYMBOL, DURATION_S, count=1000)

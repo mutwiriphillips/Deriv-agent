@@ -6,7 +6,7 @@ no special-cased evaluation path for "the ML one."
 from __future__ import annotations
 
 from app.markets.context import Regime
-from app.models.dataset import FEATURE_KEYS, features_to_vector
+from app.models.dataset import features_to_vector
 from app.models.logistic_model import LogisticProbabilityModel
 from app.strategies.base import Direction, TradeCandidate
 from app.strategies.gated import GatedStrategy

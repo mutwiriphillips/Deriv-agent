@@ -1,9 +1,9 @@
 import numpy as np
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
-from app.execution.order_manager import ExecutionOutcome, OrderManager, OrderManagerConfig
+from app.execution.order_manager import OrderManager, OrderManagerConfig
 from app.markets.context import MarketType
 from app.monitoring.session_stats import SessionStats
 from app.orchestration.forward_test_runner import ForwardTestRunner

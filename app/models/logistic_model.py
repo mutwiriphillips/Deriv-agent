@@ -17,7 +17,6 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
-from app.models.dataset import FEATURE_KEYS
 
 
 @dataclass

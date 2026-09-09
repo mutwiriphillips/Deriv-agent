@@ -8,7 +8,7 @@ requirement, not because it seemed like good practice in general.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from app.execution.auth_client import DerivAuthenticatedClient
 from app.markets.ws_client import DerivPublicClient
