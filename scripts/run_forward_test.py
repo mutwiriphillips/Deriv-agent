@@ -48,6 +48,20 @@ WHAT'S NEW IN THIS VERSION:
 """
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Must happen before any `from app...` import below. Running this script
+# directly (`python scripts/run_forward_test.py`) puts THIS FILE'S directory
+# (scripts/) on sys.path, not the project root -- so the `app` package at the
+# repo root is invisible unless we add it ourselves. This is exactly the bug
+# that broke the first Render deploy (ModuleNotFoundError: No module named
+# 'app') even though every local import check passed, because those checks
+# used importlib.util.spec_from_file_location with sys.path already patched
+# manually in the *test* snippet -- not the actual `python scripts/...`
+# invocation Render (and any normal user) actually runs.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import asyncio
 import os
 import sys
@@ -112,8 +126,9 @@ def ensure_db_schema(db_path: str) -> None:
     """
     import sqlite3
     conn = sqlite3.connect(db_path)
+    schema_path = Path(__file__).resolve().parent.parent / "app" / "storage" / "schema.sql"
     try:
-        with open("app/storage/schema.sql") as f:
+        with open(schema_path) as f:
             conn.executescript(f.read())
         conn.commit()
     finally:
