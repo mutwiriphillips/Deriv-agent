@@ -200,4 +200,33 @@ saved row yet, which is what triggers the daily reset naturally.
   refuses to run at all if `LIVE_TRADING` is true, so switching to live mode requires deliberately
   overriding both the blueprint and the script's own check, not just one dashboard toggle.
 
+## 13. Control API (the "agent" surface)
+
+Everything through Phase 15 was read-only monitoring. `app/control/bot_controller.py`
+adds the first real control surface: **start**, **stop**, and **switch strategy** at
+runtime, without restarting the process.
+
+**Read-only, no auth:**
+- `GET /strategies` — lists selectable strategies and which one is currently active
+
+**Requires the `X-API-Key` header to match `CONTROL_API_KEY`** (control is entirely
+disabled — every call returns 401 — if that env var isn't set):
+- `POST /control/start`
+- `POST /control/stop`
+- `POST /control/select-strategy?name=<random|simple_momentum|simple_trend>`
+
+**Deliberately NOT controllable via this API:** `LIVE_TRADING` itself, and any
+`RiskGovernor` limit (`MAX_DAILY_LOSS`, `MAX_DRAWDOWN`, etc.). Those stay
+config-driven (env vars) and code-enforced, on purpose — a remote "flip live trading
+on" lever would defeat the entire demo-first design this system was built around.
+
+A strategy switch takes effect on the very next tick — `scripts/run_forward_test.py`'s
+loop re-reads `bot_controller.get_active_strategy()` every iteration rather than
+fixing it once at startup.
+
+**Note on scope:** this is a programmatic control API, not a visual strategy builder.
+Letting a user construct arbitrary custom logic via drag-and-drop blocks (like Deriv's
+own Bot product) would need a separate block-to-strategy interpreter that doesn't
+exist here — a reasonable future feature, not something folded into this control API.
+
 

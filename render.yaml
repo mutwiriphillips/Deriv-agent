@@ -40,6 +40,8 @@ services:
         sync: false
       - key: DERIV_APP_ID
         sync: false
+      - key: CONTROL_API_KEY
+        sync: false   # set this to enable /control/* endpoints; leave unset to keep control disabled entirely
 
       # --- mode / safety gates: DEMO-only, matches scripts/run_forward_test.py's own hard refusal to run live ---
       - key: MODE

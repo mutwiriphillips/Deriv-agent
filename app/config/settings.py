@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     # --- storage ---
     db_path: str = "forward_test.db"   # override via env for a persistent disk mount path (e.g. on Render)
 
+    # --- control API (start/stop/strategy-switch endpoints) ---
+    control_api_key: str = ""   # required header value (X-API-Key) for any /control/* endpoint; empty means control is disabled entirely
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 

@@ -43,6 +43,114 @@ def test_status_after_a_tick_returns_dashboard_json():
     assert body["updated_at"] is not None
 
 
+def test_backtest_report_endpoint_rejects_unknown_strategy():
+    client = TestClient(app)
+    response = client.get("/backtest-report?strategy=not_a_real_strategy")
+    assert response.status_code == 200
+    assert "error" in response.json()
+
+
+def test_backtest_report_endpoint_runs_against_a_real_db(tmp_path, monkeypatch):
+    import sqlite3
+    import numpy as np
+
+    db_path = str(tmp_path / "test.db")
+    conn = sqlite3.connect(db_path)
+    with open("app/storage/schema.sql") as f:
+        conn.executescript(f.read())
+    rng = np.random.default_rng(1)
+    closes = list(1.0 + np.cumsum(rng.normal(0, 0.002, 200)))
+    for i, c in enumerate(closes):
+        t = 1_700_000_000 + i * 60
+        conn.execute(
+            "INSERT INTO candles (symbol, duration_s, timestamp, open, high, low, close, tick_count) VALUES (?,?,?,?,?,?,?,?)",
+            ("frxEURUSD", 60, t, c, c + 0.001, c - 0.001, c, 1),
+        )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr("app.api.server.settings.db_path", db_path)
+
+    client = TestClient(app)
+    response = client.get("/backtest-report?strategy=random")
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["symbol"] == "frxEURUSD"
+    assert "text_report" in body
+    assert "Total trades" in body["text_report"]
+
+
+def test_model_comparison_report_endpoint_with_insufficient_data(tmp_path, monkeypatch):
+    import sqlite3
+
+    db_path = str(tmp_path / "test.db")
+    conn = sqlite3.connect(db_path)
+    with open("app/storage/schema.sql") as f:
+        conn.executescript(f.read())
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr("app.api.server.settings.db_path", db_path)
+
+    client = TestClient(app)
+    response = client.get("/model-comparison-report")
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["n_candles"] == 0
+    assert body["warning"] is not None
+    assert "text_report" in body
+
+
+def test_stress_test_report_endpoint_with_no_trades(tmp_path, monkeypatch):
+    import sqlite3
+
+    db_path = str(tmp_path / "test.db")
+    conn = sqlite3.connect(db_path)
+    with open("app/storage/schema.sql") as f:
+        conn.executescript(f.read())
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr("app.api.server.settings.db_path", db_path)
+
+    client = TestClient(app)
+    response = client.get("/stress-test-report")
+    body = response.json()
+
+    assert response.status_code == 200
+    assert "warning" in body
+
+
+def test_stress_test_report_endpoint_rejects_unknown_strategy():
+    client = TestClient(app)
+    response = client.get("/stress-test-report?strategy=not_real")
+    assert "error" in response.json()
+
+
+def test_deployment_checklist_endpoint_with_no_data(tmp_path, monkeypatch):
+    import sqlite3
+
+    db_path = str(tmp_path / "test.db")
+    conn = sqlite3.connect(db_path)
+    with open("app/storage/schema.sql") as f:
+        conn.executescript(f.read())
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr("app.api.server.settings.db_path", db_path)
+
+    client = TestClient(app)
+    response = client.get("/deployment-checklist")
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["all_passed"] is False   # can never pass with zero data
+    assert len(body["items"]) == 14
+    assert "text_report" in body
+
+
 def test_latest_state_holder_updates_timestamp():
     holder = LatestStateHolder()
     assert holder.updated_at is None

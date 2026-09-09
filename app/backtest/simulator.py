@@ -38,6 +38,7 @@ class TradeRecord:
     exit_price: float
     result: str          # "WIN" or "LOSS"
     profit_loss: float
+    regime: str = "UNKNOWN"   # the market regime at entry — enables regime-filtered analysis (Part 34/38)
 
 
 @dataclass
@@ -213,6 +214,7 @@ def run_backtest(
                 exit_price=exit_price,
                 result="WIN" if win else "LOSS",
                 profit_loss=profit_loss,
+                regime=ctx.regime.value,
             )
         )
 
