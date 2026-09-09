@@ -143,6 +143,21 @@ CREATE TABLE IF NOT EXISTS system_events (
     details     TEXT
 );
 
+CREATE TABLE IF NOT EXISTS daily_state (
+    trade_date          TEXT PRIMARY KEY,   -- "YYYY-MM-DD", UTC. One row per day -- a new day has no row, which IS the daily reset.
+    current_balance     REAL NOT NULL,
+    peak_balance        REAL NOT NULL,
+    consecutive_losses  INTEGER NOT NULL,
+    emergency_stopped   BOOLEAN NOT NULL,
+    trades_today        INTEGER NOT NULL,
+    wins                INTEGER NOT NULL,
+    losses              INTEGER NOT NULL,
+    session_pnl         REAL NOT NULL,
+    current_losing_streak      INTEGER NOT NULL,
+    longest_losing_streak_today INTEGER NOT NULL,
+    updated_at          TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS performance_snapshots (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp           TEXT NOT NULL,

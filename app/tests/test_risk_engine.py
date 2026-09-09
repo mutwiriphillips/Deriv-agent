@@ -77,6 +77,19 @@ def test_governor_consecutive_losses_reset_on_a_win():
     assert gov.consecutive_losses == 0
 
 
+def test_governor_start_new_day_resets_daily_loss_but_not_drawdown():
+    gov = RiskGovernor(starting_balance=1000, max_daily_loss=50, max_drawdown=0.9, max_consecutive_losses=100)
+    gov.record_trade_result(-40.0)
+    assert gov.daily_loss == pytest.approx(40.0)
+    peak_before = gov.peak_balance
+
+    gov.start_new_day()
+
+    assert gov.daily_loss == pytest.approx(0.0)   # daily reference point moved to today's balance
+    assert gov.peak_balance == peak_before         # drawdown tracking is NOT a calendar-day concept
+    assert gov.drawdown_fraction == pytest.approx((peak_before - gov.current_balance) / peak_before)
+
+
 def test_governor_daily_loss_limit_logs_event():
     gov = RiskGovernor(starting_balance=1000, max_daily_loss=50, max_drawdown=0.9, max_consecutive_losses=100)
     gov.record_trade_result(-60.0)

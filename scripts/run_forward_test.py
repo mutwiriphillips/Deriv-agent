@@ -37,12 +37,25 @@ real response can confirm):
   - Does SETTLEMENT show up correctly (is_sold/status/profit) after a
     contract expires? If proposal_open_contract's shape differs, that's
     execution/contract_monitor.py to fix.
+WHAT'S NEW IN THIS VERSION:
+  - Serves a minimal read-only HTTP surface (/health, /status) via uvicorn,
+    running concurrently with the trading loop in the same process. This is
+    why Render deploys this as a `web` service now, not a `worker` — see
+    render.yaml's comments.
+  - Persists RiskGovernor/SessionStats state to the same SQLite file used
+    for candles after every tick, and restores it on startup. This closes
+    the "a restart forgets today's P/L" gap — see monitoring/state_persistence.py.
 """
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 
+import uvicorn
+
+from app.api.server import app as fastapi_app
+from app.api.server import latest_state
 from app.config.settings import settings
 from app.data.historical_store import fetch_and_store_candles
 from app.execution.auth_client import DerivAuthenticatedClient
@@ -53,6 +66,11 @@ from app.markets.rest_client import get_accounts, get_ws_url_for_account
 from app.markets.ws_client import DerivPublicClient
 from app.monitoring.dashboard import render_dashboard_text
 from app.monitoring.session_stats import SessionStats
+from app.monitoring.state_persistence import (
+    restore_state_if_present,
+    save_daily_state,
+    today_utc_date_str,
+)
 from app.orchestration.forward_test_runner import ForwardTestRunner
 from app.risk.exposure import ExposureManager
 from app.risk.governor import RiskGovernor
@@ -65,7 +83,7 @@ DURATION_S = 60              # 1-minute candles
 DURATION_CANDLES = 1         # contract resolves 1 candle (i.e. 60s) after entry
 POLL_INTERVAL_S = 60.0       # check for a new candle once a minute
 STARTING_BALANCE_FOR_GOVERNOR = 1000.0   # the governor's OWN tracking; it does not read your real balance
-DB_PATH = "forward_test.db"
+DB_PATH = settings.db_path
 
 
 async def get_demo_ws_url() -> str:
@@ -121,6 +139,52 @@ def load_series_from_db(db_path: str, symbol: str, duration_s: int) -> CandleSer
     )
 
 
+async def trading_loop(order_manager: OrderManager, runner: ForwardTestRunner, session_stats: SessionStats, ws_url: str):
+    current_trade_date = today_utc_date_str()
+    restored = restore_state_if_present(DB_PATH, current_trade_date, order_manager.risk_governor, session_stats)
+    print(f"Restored today's saved state: {restored}")
+
+    print(f"Starting forward test on {SYMBOL}. Press Ctrl+C to stop.\n")
+    tick_count = 0
+
+    while True:
+        tick_count += 1
+
+        today = today_utc_date_str()
+        if today != current_trade_date:
+            print(f"New day detected ({current_trade_date} -> {today}): resetting daily P/L, keeping drawdown history.")
+            order_manager.risk_governor.start_new_day()
+            session_stats.reset_daily()
+            current_trade_date = today
+
+        await fetch_and_store_candles(DB_PATH, SYMBOL, DURATION_S, count=50)
+        series = load_series_from_db(DB_PATH, SYMBOL, DURATION_S)
+
+        if len(series) < 120:
+            print(f"Only {len(series)} candles so far - waiting for enough warmup history...")
+            await asyncio.sleep(POLL_INTERVAL_S)
+            continue
+
+        # Fresh connections per tick keep this simple and robust to a dropped
+        # socket between ticks; a longer-running version would keep these
+        # open and add reconnect/backoff (spec Part 30) instead.
+        async with DerivPublicClient() as public_client:
+            async with DerivAuthenticatedClient(ws_url) as auth_client:
+                runner.public_client = public_client
+                runner.auth_client = auth_client
+                signal_id = f"{SYMBOL}-{series.timestamps[-1]}-{tick_count}"
+                state = await runner.run_once(series, signal_id=signal_id)
+
+        latest_state.update(state)
+        save_daily_state(DB_PATH, current_trade_date, order_manager.risk_governor, session_stats)
+
+        print(f"--- tick {tick_count} ---")
+        print(render_dashboard_text(state))
+        print()
+
+        await asyncio.sleep(POLL_INTERVAL_S)
+
+
 async def main():
     if settings.live_trading:
         print("LIVE_TRADING is true in .env - refusing to run this script. This script is DEMO-only by design.")
@@ -159,6 +223,7 @@ async def main():
             max_trades_per_day=settings.max_trades_per_day,
         ),
     )
+    session_stats = SessionStats()
 
     runner = ForwardTestRunner(
         symbol=SYMBOL,
@@ -167,41 +232,22 @@ async def main():
         model_version="baseline_simple_trend_v1",
         order_manager=order_manager,
         risk_governor=order_manager.risk_governor,
-        session_stats=SessionStats(),
-        public_client=None,   # set fresh each loop iteration below (see note in the loop)
+        session_stats=session_stats,
+        public_client=None,   # set fresh each loop iteration (see note in trading_loop)
         auth_client=None,
         duration_candles=DURATION_CANDLES,
         duration_s=DURATION_S,
     )
 
-    print(f"Starting forward test on {SYMBOL}. Press Ctrl+C to stop.\n")
-    tick_count = 0
+    port = int(os.environ.get("PORT", 8000))   # Render sets PORT for web services; defaults to 8000 for local runs
+    server_config = uvicorn.Config(fastapi_app, host="0.0.0.0", port=port, log_level="warning")
+    server = uvicorn.Server(server_config)
+    print(f"HTTP status surface listening on :{port} (/health, /status)")
 
-    while True:
-        tick_count += 1
-        inserted = await fetch_and_store_candles(DB_PATH, SYMBOL, DURATION_S, count=50)
-        series = load_series_from_db(DB_PATH, SYMBOL, DURATION_S)
-
-        if len(series) < 120:
-            print(f"Only {len(series)} candles so far - waiting for enough warmup history...")
-            await asyncio.sleep(POLL_INTERVAL_S)
-            continue
-
-        # Fresh connections per tick keep this simple and robust to a dropped
-        # socket between ticks; a longer-running version would keep these
-        # open and add reconnect/backoff (spec Part 30) instead.
-        async with DerivPublicClient() as public_client:
-            async with DerivAuthenticatedClient(ws_url) as auth_client:
-                runner.public_client = public_client
-                runner.auth_client = auth_client
-                signal_id = f"{SYMBOL}-{series.timestamps[-1]}-{tick_count}"
-                state = await runner.run_once(series, signal_id=signal_id)
-
-        print(f"--- tick {tick_count} ---")
-        print(render_dashboard_text(state))
-        print()
-
-        await asyncio.sleep(POLL_INTERVAL_S)
+    await asyncio.gather(
+        server.serve(),
+        trading_loop(order_manager, runner, session_stats, ws_url),
+    )
 
 
 if __name__ == "__main__":

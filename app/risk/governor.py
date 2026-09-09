@@ -97,6 +97,27 @@ class RiskGovernor:
         self._emergency_stopped = False
         self._log_event("MANUAL_RESET", {})
 
+    def load_state(self, current_balance: float, peak_balance: float, consecutive_losses: int, emergency_stopped: bool) -> None:
+        """
+        Restores persisted state after a restart (see monitoring/state_persistence.py).
+        Config — the limits themselves — always comes from construction/settings,
+        never from persisted state, so a config change takes effect immediately
+        on restart rather than being silently overridden by an old snapshot.
+        """
+        self.current_balance = current_balance
+        self.peak_balance = peak_balance
+        self.consecutive_losses = consecutive_losses
+        self._emergency_stopped = emergency_stopped
+
+    def start_new_day(self) -> None:
+        """
+        Resets the daily-loss reference point at calendar-day rollover.
+        Deliberately does NOT reset peak_balance/drawdown — Part 33's drawdown
+        is measured from the all-time peak, not a calendar-day concept, so a
+        losing streak that started yesterday still counts toward drawdown today.
+        """
+        self.starting_balance = self.current_balance
+
     def _log_event(self, event_type: str, details: dict) -> None:
         self.events.append(RiskEvent(event_type=event_type, details=details))
 

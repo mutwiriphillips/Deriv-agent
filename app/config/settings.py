@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     # --- durations to test (seconds) ---
     supported_durations_s: list[int] = [30, 60, 120, 300, 600, 900]
 
+    # --- storage ---
+    db_path: str = "forward_test.db"   # override via env for a persistent disk mount path (e.g. on Render)
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 

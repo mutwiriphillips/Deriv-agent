@@ -165,3 +165,39 @@ Monitoring/dashboard → Forward demo testing → Micro-live safety testing → 
 
 **Nothing beyond Phase 1 is implemented yet.** Next phase (Phase 2) starts with the current Deriv
 API schema and requires a Deriv account (demo is fine) with an API token to proceed.
+
+## 12. Deployment (Render)
+
+This deploys as a Render **web service** — `scripts/run_forward_test.py` runs the trading loop and
+a minimal read-only HTTP surface (`/health`, `/status`, see `app/api/server.py`) concurrently in
+the same process, so Render's health checks and external monitoring both work. `/status` returns
+the current dashboard snapshot as JSON; there are deliberately no control endpoints (stop trading,
+reset emergency stop) exposed over HTTP without real auth — that's a reasonable future addition,
+not an oversight.
+
+**Blueprint deploy (recommended):** push this repo to a Git provider, then in the Render
+dashboard choose New → Blueprint and point it at the repo. `render.yaml` provisions everything —
+build command, start command, every config threshold as an env var, and a persistent disk for
+the candle store and daily risk/session state. You'll be prompted to fill in `DERIV_API_TOKEN` and
+`DERIV_APP_ID` yourself; they're marked `sync: false` so they're never written into the blueprint file.
+
+**Docker deploy (alternative):** set the service's Runtime to Docker instead — the included
+`Dockerfile` builds the same app and runs the same start command.
+
+**State persistence:** `RiskGovernor` and `SessionStats` are saved to the same disk-backed SQLite
+file used for candles after every tick (`app/monitoring/state_persistence.py`), keyed by UTC date.
+A restart resumes today's P/L, consecutive-loss count, and (importantly) an active emergency-stop
+state — it does not silently forget you were stopped for a real reason. A new calendar day has no
+saved row yet, which is what triggers the daily reset naturally.
+
+**Known caveats, stated plainly rather than glossed over:**
+- Render Disks require a paid instance tier — check current Render pricing before assuming this
+  works on a free plan. Without the disk, both candle history and daily state are lost on every
+  restart, same as before this was added.
+- The `/status` endpoint is read-only and unauthenticated by design — don't add a write/control
+  endpoint to this file without adding real authentication first.
+- `render.yaml` sets `MODE=DEMO` and `LIVE_TRADING=false` deliberately — the script itself also
+  refuses to run at all if `LIVE_TRADING` is true, so switching to live mode requires deliberately
+  overriding both the blueprint and the script's own check, not just one dashboard toggle.
+
+
