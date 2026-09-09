@@ -102,14 +102,21 @@ DB_PATH = settings.db_path
 
 async def get_demo_ws_url() -> str:
     accounts = await get_accounts()
-    demo_accounts = [a for a in accounts if a.get("is_virtual") or "demo" in str(a.get("account_type", "")).lower()]
+    # account_type with enum ["demo", "real"] is confirmed against Deriv's
+    # published OpenAPI spec (used identically in the account-creation
+    # request body); is_virtual is kept only as a fallback in case a given
+    # account object omits account_type for some reason.
+    demo_accounts = [
+        a for a in accounts
+        if a.get("account_type") == "demo" or a.get("is_virtual")
+    ]
     if not demo_accounts:
         raise RuntimeError(
             f"No demo account found in get_accounts() response: {accounts}. "
-            "Check the actual field name Deriv uses to mark an account as demo/virtual "
+            "Check the actual field name/value Deriv uses to mark an account as demo "
             "and fix this filter."
         )
-    account_id = demo_accounts[0]["account_id"] if "account_id" in demo_accounts[0] else demo_accounts[0].get("id")
+    account_id = demo_accounts[0].get("account_id") or demo_accounts[0].get("id")
     if account_id is None:
         raise RuntimeError(f"Could not find an account id field in: {demo_accounts[0]}")
     return await get_ws_url_for_account(account_id)
